@@ -125,40 +125,20 @@ export default function FileConverterApp() {
     const hasPdf = types.has('application/pdf')
     const hasDocx = types.has('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
 
-    let options = []
-
-    // Logic: options valid for ALL files
-    // If mixed, we only show options that ALL can convert to (or we could show union but it might fail)
-    // Let's assume we want intersection of capabilities.
-
-    // Capabilities:
-    // Image -> PDF, DOCX, JPG, PNG
-    // PDF -> DOCX, JPG, PNG, PDF(copy)
-    // DOCX -> PDF
-
     if (hasDocx) {
-      // If any DOCX is present, practically only PDF is a common target with others
-      // If Only DOCX
-      if (!hasImage && !hasPdf) {
-        return [{ value: 'pdf', label: 'PDF Document (.pdf)' }]
-      }
-      // If Mixed (e.g. DOCX + Image) -> Both can go to PDF
       return [{ value: 'pdf', label: 'PDF Document (.pdf)' }]
     }
 
-    // No DOCX present
     if (hasPdf) {
-      // PDF + Image -> PDF(copy/img->pdf), DOCX, JPG, PNG
-      // PDF Only -> DOCX, JPG, PNG, PDF
+      // PDF Options: Distinct choices for Image vs Text
       return [
-        { value: 'docx', label: 'Word Document (.docx)' },
-        { value: 'jpg', label: 'JPG Image (.jpg)' },
-        { value: 'png', label: 'PNG Image (.png)' },
-        { value: 'pdf', label: 'PDF Document (.pdf)' }
+        { value: 'docx-image', label: 'Word (Same Layout - Image Based)' },
+        { value: 'docx-text', label: 'Word (Editable Text - Layout May Change)' },
+        { value: 'png', label: 'PNG Images (.png)' },
+        { value: 'jpg', label: 'JPG Images (.jpg)' }
       ]
     }
 
-    // Images Only
     if (hasImage) {
       return [
         { value: 'pdf', label: 'PDF Document (.pdf)' },
@@ -205,11 +185,10 @@ export default function FileConverterApp() {
             resultBlob = await convertPDFToJPG(item.file)
           } else if (targetFormat === 'png') {
             resultBlob = await convertPDFToPNG(item.file)
-          } else if (targetFormat === 'pdf') {
-            // PDF to PDF (Just copy)
-            resultBlob = item.file
-          } else if (targetFormat === 'docx') {
-            resultBlob = await convertPDFToWord(item.file)
+          } else if (targetFormat === 'docx-image') {
+            resultBlob = await convertPDFToWord(item.file, 'image')
+          } else if (targetFormat === 'docx-text') {
+            resultBlob = await convertPDFToWord(item.file, 'text')
           }
         } else if (item.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') { // DOCX
           if (targetFormat === 'pdf') {
@@ -221,7 +200,7 @@ export default function FileConverterApp() {
           const url = URL.createObjectURL(resultBlob)
           results.push({
             originalName: item.name,
-            newName: item.name.replace(/\.[^/.]+$/, "") + `_converted.${resultExt}`,
+            newName: item.name.replace(/\.[^/.]+$/, "") + `_converted.${resultExt === 'docx-image' || resultExt === 'docx-text' ? 'docx' : resultExt}`,
             url: url,
             status: 'success'
           })
@@ -236,7 +215,10 @@ export default function FileConverterApp() {
       }
 
       // Update progress
-      setProgress(Math.round(((files.indexOf(item) + 1) / files.length) * 100))
+      const newProgress = Math.round(((files.indexOf(item) + 1) / files.length) * 100)
+      setProgress(newProgress)
+      // Small delay to let UI render the progress bar update
+      await new Promise(r => setTimeout(r, 10))
     }
 
     setConvertedFiles(results)
@@ -379,8 +361,40 @@ export default function FileConverterApp() {
     })
   }
 
-  // Helper: PDF -> Word (Editable Text)
-  const convertPDFToWord = async (file) => {
+  // Helper: Load Thai Font
+  const loadThaiFont = async (doc) => {
+    try {
+      // Use jsDelivr -> Google Fonts (Stable)
+      const fontUrl = 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/sarabun/Sarabun-Regular.ttf'
+      const response = await fetch(fontUrl)
+      if (!response.ok) throw new Error("Failed to fetch font")
+
+      const blob = await response.blob()
+      const reader = new FileReader()
+      return new Promise((resolve) => {
+        reader.onloadend = () => {
+          const base64data = reader.result.split(',')[1]
+          if (base64data) {
+            doc.addFileToVFS("Sarabun-Regular.ttf", base64data)
+            doc.addFont("Sarabun-Regular.ttf", "Sarabun", "normal")
+            doc.setFont("Sarabun")
+            resolve()
+          } else {
+            // Fallback if font empty
+            resolve()
+          }
+        }
+        reader.onerror = resolve // Resolve anyway to proceed without custom font
+        reader.readAsDataURL(blob)
+      })
+    } catch (e) {
+      console.error("Failed to load Thai font", e)
+      // Resolve to allow process to continue
+    }
+  }
+
+  // Helper: PDF -> Word (Dual Mode)
+  const convertPDFToWord = async (file, mode = 'image') => {
     const arrayBuffer = await file.arrayBuffer()
     const pdf = await window.pdfjsLib.getDocument(arrayBuffer).promise
     const numPages = pdf.numPages
@@ -390,28 +404,51 @@ export default function FileConverterApp() {
 
     for (let i = 1; i <= numPages; i++) {
       const page = await pdf.getPage(i)
-      const textContent = await page.getTextContent()
 
-      // Simple text extraction (line by line basis)
-      // This won't preserve perfect layout (tables/columns) but gives editable text
-      let lastY = -1
-      let textLine = []
+      if (mode === 'text') {
+        // EDITABLE TEXT MODE
+        const textContent = await page.getTextContent()
+        let lastY = -1
+        let textLine = []
 
-      for (const item of textContent.items) {
-        // Basic line grouping by Y position
-        if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
-          // New Line
-          children.push(new Paragraph(textLine.join(' ')))
-          textLine = []
+        for (const item of textContent.items) {
+          if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
+            children.push(new Paragraph(textLine.join(' ')))
+            textLine = []
+          }
+          textLine.push(item.str)
+          lastY = item.transform[5]
         }
-        textLine.push(item.str)
-        lastY = item.transform[5]
-      }
-      if (textLine.length > 0) {
-        children.push(new Paragraph(textLine.join(' ')))
+        if (textLine.length > 0) children.push(new Paragraph(textLine.join(' ')))
+
+      } else {
+        // IMAGE EXACT LAYOUT MODE
+        const viewport = page.getViewport({ scale: 2.0 })
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+
+        await page.render({ canvasContext: context, viewport: viewport }).promise
+
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85))
+        const imgBuffer = await blob.arrayBuffer()
+
+        children.push(
+          new Paragraph({
+            children: [
+              new ImageRun({
+                data: imgBuffer,
+                transformation: {
+                  width: 595,
+                  height: (viewport.height / viewport.width) * 595,
+                },
+              }),
+            ],
+          })
+        )
       }
 
-      // Add page break after each page (except last)
       if (i < numPages) {
         children.push(new Paragraph({ children: [], pageBreakBefore: true }))
       }
@@ -437,6 +474,9 @@ export default function FileConverterApp() {
     const text = result.value
 
     const doc = new jsPDF()
+
+    // Load Thai Font
+    await loadThaiFont(doc)
 
     // Add text with auto-wrapping
     const fontSize = 14
