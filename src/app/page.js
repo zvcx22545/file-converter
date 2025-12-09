@@ -117,10 +117,14 @@ export default function FileConverterApp() {
             resultBlob = await convertImageToPDF(item.file)
           } else if (targetFormat === 'jpg') {
             resultBlob = await convertImageToJPG(item.file)
+          } else if (targetFormat === 'png') {
+            resultBlob = await convertImageToPNG(item.file)
           }
         } else if (item.type === 'application/pdf') {
           if (targetFormat === 'jpg') {
             resultBlob = await convertPDFToJPG(item.file)
+          } else if (targetFormat === 'png') {
+            resultBlob = await convertPDFToPNG(item.file)
           } else if (targetFormat === 'pdf') {
             // PDF to PDF (Just copy)
             resultBlob = item.file 
@@ -153,7 +157,7 @@ export default function FileConverterApp() {
   // Helper: Image -> JPG
   const convertImageToJPG = (file) => {
     return new Promise((resolve) => {
-      const img = new Image()
+      const img = new window.Image()
       img.onload = () => {
         const canvas = document.createElement('canvas')
         canvas.width = img.width
@@ -169,10 +173,26 @@ export default function FileConverterApp() {
     })
   }
 
+  // Helper: Image -> PNG
+  const convertImageToPNG = (file) => {
+    return new Promise((resolve) => {
+      const img = new window.Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        canvas.toBlob((blob) => resolve(blob), 'image/png')
+      }
+      img.src = URL.createObjectURL(file)
+    })
+  }
+
   // Helper: Image -> PDF
   const convertImageToPDF = (file) => {
     return new Promise((resolve) => {
-      const img = new Image()
+      const img = new window.Image()
       img.onload = () => {
         const { jsPDF } = window.jspdf
         // Calculate dimensions to fit A4
@@ -216,6 +236,25 @@ export default function FileConverterApp() {
     })
   }
 
+  // Helper: PDF -> PNG (First Page Only for Demo)
+  const convertPDFToPNG = async (file) => {
+    const arrayBuffer = await file.arrayBuffer()
+    const pdf = await window.pdfjsLib.getDocument(arrayBuffer).promise
+    const page = await pdf.getPage(1) // Get first page
+    
+    const viewport = page.getViewport({ scale: 1.5 }) // High quality scale
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    canvas.height = viewport.height
+    canvas.width = viewport.width
+
+    await page.render({ canvasContext: context, viewport: viewport }).promise
+    
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/png')
+    })
+  }
+
   const resetAll = () => {
     setFiles([])
     setConvertedFiles([])
@@ -238,7 +277,7 @@ export default function FileConverterApp() {
             </h1>
           </div>
           <div className="text-sm text-gray-500 hidden sm:block">
-            แปลงไฟล์ JPG, PDF, WEBP ฟรีและปลอดภัย
+            แปลงไฟล์ JPG, PNG, PDF, WEBP ฟรีและปลอดภัย
           </div>
         </div>
       </header>
@@ -251,7 +290,7 @@ export default function FileConverterApp() {
             แปลงไฟล์ของคุณได้ง่ายๆ
           </h2>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            รองรับการแปลงระหว่าง JPG, PDF และ WEBP ประมวลผลบนเบราว์เซอร์ของคุณ 100% ไม่มีการอัปโหลดไฟล์ขึ้น Server
+            รองรับการแปลงระหว่าง JPG, PNG, PDF และ WEBP
           </p>
         </div>
 
@@ -271,12 +310,12 @@ export default function FileConverterApp() {
                   <Upload size={28} />
                 </div>
                 <p className="text-lg font-medium text-gray-700">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</p>
-                <p className="text-sm text-gray-400 mt-2">รองรับ JPG, WEBP, PDF</p>
+                <p className="text-sm text-gray-400 mt-2">รองรับ JPG, PNG, WEBP, PDF</p>
                 <input 
                   ref={fileInputRef}
                   type="file" 
                   className="hidden" 
-                  accept=".jpg,.jpeg,.webp,.pdf" 
+                  accept=".jpg,.jpeg,.png,.webp,.pdf" 
                   multiple 
                   onChange={handleChange}
                 />
@@ -337,6 +376,7 @@ export default function FileConverterApp() {
                   >
                     <option value="pdf">PDF Document (.pdf)</option>
                     <option value="jpg">JPG Image (.jpg)</option>
+                    <option value="png">PNG Image (.png)</option>
                   </select>
                   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
                     <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
