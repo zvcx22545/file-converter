@@ -130,10 +130,9 @@ export default function FileConverterApp() {
     }
 
     if (hasPdf) {
-      // PDF Options: Distinct choices for Image vs Text
+      // PDF Options: Standard Word (Editable)
       return [
-        { value: 'docx-image', label: 'Word (Same Layout - Image Based)' },
-        { value: 'docx-text', label: 'Word (Editable Text - Layout May Change)' },
+        { value: 'docx', label: 'Word Document (.docx)' },
         { value: 'png', label: 'PNG Images (.png)' },
         { value: 'jpg', label: 'JPG Images (.jpg)' }
       ]
@@ -185,9 +184,8 @@ export default function FileConverterApp() {
             resultBlob = await convertPDFToJPG(item.file)
           } else if (targetFormat === 'png') {
             resultBlob = await convertPDFToPNG(item.file)
-          } else if (targetFormat === 'docx-image') {
-            resultBlob = await convertPDFToWord(item.file, 'image')
-          } else if (targetFormat === 'docx-text') {
+          } else if (targetFormat === 'docx') {
+            // Default to TEXT mode for standard Word conversion
             resultBlob = await convertPDFToWord(item.file, 'text')
           }
         } else if (item.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') { // DOCX
@@ -395,6 +393,7 @@ export default function FileConverterApp() {
 
   // Helper: PDF -> Word (Dual Mode)
   const convertPDFToWord = async (file, mode = 'image') => {
+    if (!window.pdfjsLib) throw new Error("PDF Library not ready")
     const arrayBuffer = await file.arrayBuffer()
     const pdf = await window.pdfjsLib.getDocument(arrayBuffer).promise
     const numPages = pdf.numPages
@@ -423,30 +422,42 @@ export default function FileConverterApp() {
 
       } else {
         // IMAGE EXACT LAYOUT MODE
-        const viewport = page.getViewport({ scale: 2.0 })
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d')
-        canvas.width = viewport.width
-        canvas.height = viewport.height
+        try {
+          // Reduced scale to 1.5 to safely handle large files without crashing
+          const viewport = page.getViewport({ scale: 1.5 })
+          const canvas = document.createElement('canvas')
+          const context = canvas.getContext('2d')
+          canvas.width = viewport.width
+          canvas.height = viewport.height
 
-        await page.render({ canvasContext: context, viewport: viewport }).promise
+          await page.render({ canvasContext: context, viewport: viewport }).promise
 
-        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85))
-        const imgBuffer = await blob.arrayBuffer()
+          const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.8))
+          if (!blob) throw new Error("Image generation failed")
 
-        children.push(
-          new Paragraph({
-            children: [
-              new ImageRun({
-                data: imgBuffer,
-                transformation: {
-                  width: 595,
-                  height: (viewport.height / viewport.width) * 595,
-                },
-              }),
-            ],
-          })
-        )
+          const arrayBuffer = await blob.arrayBuffer()
+          const uint8Array = new Uint8Array(arrayBuffer)
+
+          const imgWidth = 595
+          const imgHeight = Math.round((viewport.height / viewport.width) * 595)
+
+          children.push(
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  data: uint8Array,
+                  transformation: {
+                    width: imgWidth,
+                    height: imgHeight,
+                  },
+                }),
+              ],
+            })
+          )
+        } catch (err) {
+          console.error(`Error processing page ${i} image`, err)
+          children.push(new Paragraph(`[Error processing page ${i}]`))
+        }
       }
 
       if (i < numPages) {
