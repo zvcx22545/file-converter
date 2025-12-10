@@ -298,7 +298,8 @@ export default function FileConverterApp() {
     return new Promise((resolve) => {
       const img = new window.Image()
       img.onload = () => {
-        const { jsPDF } = window.jspdf
+        // Const { jsPDF } = window.jspdf; // Removed: using imported module
+
         // Calculate dimensions to fit A4
         const doc = new jsPDF()
         const pageWidth = doc.internal.pageSize.getWidth()
